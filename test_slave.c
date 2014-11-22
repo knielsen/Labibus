@@ -1,4 +1,5 @@
 #include <util/delay.h>
+#include <util/atomic.h>
 
 #include <arduino/pins.h>
 #include <arduino/serial.h>
@@ -64,7 +65,25 @@ serial_putc(uint8_t c)
 {
   while (!serial_writeable())
     ;
-  serial_write(c);
+  /*
+    Make sure we can use TXC (transmit complete) to wait for the char to be
+    completely transmittet before turning off RS485 transmit mode.
+
+    The TXC flag must be manually cleared (unless it gets cleared by
+    triggering an interrupt). And we need to avoid races when clearing it, so
+    that we do not risk missing that it becomes set, nor risk seeing it become
+    set by an earlier char that completes after clearing it.
+
+    So clear the TXC flag immediately after writing the last char. And disable
+    interrupts around it; this is necessary to avoid that an interrupt triggers
+    just after writing the char, delaying the clear until the last char has
+    completed, which would lose the completion event.
+  */
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+  {
+    serial_write(c);
+    UCSR0A |= _BV(TXC0);
+  }
 }
 
 
@@ -94,7 +113,8 @@ test_slave(void)
     for (;;)
     {
       uint8_t c = serial_getc();
-// serial_putc('['); serial_putc((c>>4)+'A'); serial_putc((c&0xf)+'A'); serial_putc(']');
+      if (!idx && c != '?')
+        continue;
       if (c == '\n')
         break;
       if (c == '\r')
@@ -104,14 +124,22 @@ test_slave(void)
       buf[idx++] = c;
     }
 
+    /* Let's give the master a bit of time to get into receive mode. */
     _delay_ms(1);
     rs485_transmit_mode();
-    serial_puts("ECHO: ");
+    _delay_ms(1);  // Todo: Only need to wait like 200 ns or so for enable proparation delay.
+    /*
+      Send a dummy byte of all one bits. This should ensure that the UART state
+      machine can sync up to the byte boundary, as in prevents any new start bit
+      being seen for one character's time.
+    */
+    serial_putc(0xff);
+    serial_puts("!ECHO: ");
     for (i = 0; i < idx; ++i)
       serial_putc(buf[i]);
-    serial_puts("\r\n123");
+    serial_puts("\r\n");
     serial_wait_for_tx_complete();
-    _delay_ms(1);
+    rs485_receive_mode();
   }
 }
 
@@ -132,7 +160,7 @@ main(int argc, char *argv[])
   pin_mode_output(13);
   led_off();
 
-  cli();//sei();
+  sei();
 
   serial_baud_2400();
   serial_mode_8n1();
