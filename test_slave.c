@@ -2,6 +2,7 @@
 #include <util/atomic.h>
 #include <avr/pgmspace.h>
 
+#include <stdlib.h>
 #include <stdio.h>
 
 #include <arduino/pins.h>
@@ -189,9 +190,64 @@ dec2hex(uint8_t x)
 }
 
 
-static void
-send_reply(uint8_t *buf)
+
+static uint8_t
+append_char_to_buf(uint8_t *buf, uint8_t idx, uint8_t c)
 {
+  if (idx < MAX_REQ-1)
+    buf[idx++] = c;
+  return idx;
+}
+
+
+static uint8_t
+quoted_append_char_to_buf(uint8_t *buf, uint8_t idx, uint8_t c)
+{
+  if (c < ' ' || c >= 127 || c == '!' || c == '?' || c == '|' || c == '\\')
+  {
+    idx = append_char_to_buf(buf, idx, '\\');
+    idx = append_char_to_buf(buf, idx, dec2hex(c >> 4));
+    idx = append_char_to_buf(buf, idx, dec2hex(c & 0xf));
+  }
+  else
+    idx = append_char_to_buf(buf, idx, c);
+
+  return idx;
+}
+
+
+static uint8_t
+append_to_buf(uint8_t *buf, uint8_t idx, const char *s)
+{
+  char c;
+
+  while ((c = *s))
+  {
+    idx = append_char_to_buf(buf, idx, c);
+    ++s;
+  }
+  return idx;
+}
+
+
+static uint8_t
+quoted_append_to_buf(uint8_t *buf, uint8_t idx, const char *s)
+{
+  char c;
+
+  while ((c = *s))
+  {
+    idx = quoted_append_char_to_buf(buf, idx, c);
+    ++s;
+  }
+  return idx;
+}
+
+
+static void
+send_reply(uint8_t *buf, uint8_t len)
+{
+  uint8_t i;
   uint16_t crc = 0;
 
   /* Let's give the master a bit of time to get into receive mode. */
@@ -208,24 +264,10 @@ send_reply(uint8_t *buf)
     being seen for one character's time.
   */
   serial_putc(0xff);
-  for (;;)
+  for (i = 0; i < len; ++i)
   {
-    uint8_t c = *buf++;
-
-    if (!c)
-      break;
+    uint8_t c = buf[i];
     crc = crc16(c, crc);
-#if TODO_FIX_QUOTING
-    if (c < ' ' || c >= 127 || c == '!' || c == '?' || c == '|' || c == '\\' ||
-        c == ':')
-    {
-      /* Handle escaping. */
-      serial_putc('\\');
-      serial_putc(dec2hex(c >> 4));
-      serial_putc(dec2hex(c & 0xff));
-    }
-    else
-#endif
       serial_putc(c);
   }
   /* Send the CRC and request end marker. */
@@ -243,21 +285,38 @@ send_reply(uint8_t *buf)
 static void
 device_discover(uint8_t id, uint8_t *buf)
 {
+  uint8_t idx;
+  char tmp[20];
+
   if (id != my_device_id)
     return;
-  snprintf((char *)buf, MAX_REQ-6, "!%02x:D%u|Temperature room 2|degree C|",
-           id, my_poll_interval);
-  send_reply(buf);
+
+  idx = 0;
+  sprintf(tmp, "!%02x:D%u|", id, my_poll_interval);
+  idx = append_to_buf(buf, idx, tmp);
+  idx = quoted_append_to_buf(buf, idx, "Temperature room 2");
+  idx = append_char_to_buf(buf, idx, '|');
+  idx = quoted_append_to_buf(buf, idx, "degree C");
+  idx = append_char_to_buf(buf, idx, '|');
+  send_reply(buf, idx);
 }
 
 
 static void
 device_poll(uint8_t id, uint8_t *buf)
 {
+  uint8_t idx;
+  char tmp[20];
+
   if (id != my_device_id)
     return;
-  snprintf((char *)buf, MAX_REQ-6, "!%02x:P%g|", id, my_sensor_value);
-  send_reply(buf);
+  idx = 0;
+  sprintf(tmp, "!%02x:P", id);
+  idx = append_to_buf(buf, idx, tmp);
+  dtostrf((double)my_sensor_value, 1, 6, tmp);
+  idx = quoted_append_to_buf(buf, idx, tmp);
+  idx = append_char_to_buf(buf, idx, '|');
+  send_reply(buf, idx);
 }
 
 
@@ -297,7 +356,6 @@ process_req(uint8_t *req, uint8_t len)
 
 static uint8_t rcv_buf[MAX_REQ];
 static uint8_t rcv_idx;
-static uint8_t escape_state, escape_val;
 
 static void
 process_received_char(uint8_t c)
@@ -331,24 +389,6 @@ process_received_char(uint8_t c)
     serial_interrupt_rx_enable();
     rcv_idx = 0;
     return;
-  }
-  /* Bytes that would otherwise be special can be escaped with \HH. */
-  if (escape_state == 0 && c == '\\')
-  {
-    escape_state = 1;
-    escape_val = 0;
-    return;
-  }
-  else if (escape_state == 1)
-  {
-    escape_state = 2;
-    escape_val = hex2dec(c);
-    return;
-  }
-  else if (escape_state == 2)
-  {
-    escape_state = 0;
-    c = (escape_val << 4) | hex2dec(c);
   }
   /* Save the received byte in the buffer for later processing. */
   rcv_buf[rcv_idx++] = c;
