@@ -2,6 +2,8 @@
 #include <util/atomic.h>
 #include <avr/pgmspace.h>
 
+#include <stdio.h>
+
 #include <arduino/pins.h>
 #include <arduino/serial.h>
 
@@ -10,8 +12,18 @@
 #define PIN_RE 6
 /* RO er 0, DI er 1. */
 
+#define MAX_REQ 100
 
-static volatile uint8_t last_char;
+
+/*
+  ToDo: We want these to be configurable using library calls.
+  And we need an array of them, so we can support multiple devices in a single
+  program.
+*/
+static uint8_t my_device_id = 0x09;
+static uint16_t my_poll_interval = 15;  /* Desired polling period. */
+static float my_sensor_value = 1.235f;
+
 
 static void
 led_off(void)
@@ -153,6 +165,195 @@ static uint32_t crc16_buf(const uint8_t *buf, uint16_t len)
 }
 
 
+static uint8_t
+hex2dec(uint8_t c)
+{
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  else if (c >= 'A' && c <= 'F')
+    return c - ('A'-10);
+  else if (c >= 'a' && c <= 'f')
+    return c - ('a'-10);
+  else
+    return 0;
+}
+
+
+static uint8_t
+dec2hex(uint8_t x)
+{
+  if (x <= 9)
+    return x + '0';
+  else
+    return x + ('a' - 10);
+}
+
+
+static void
+send_reply(uint8_t *buf)
+{
+  uint16_t crc = 0;
+
+  /* Let's give the master a bit of time to get into receive mode. */
+  _delay_ms(1);
+  rs485_transmit_mode();
+  /*
+    The enable propagation delay of our RS485 driver is only 200 ns or so, so
+    we only need a small delay before we can start to transmit.
+  */
+  _delay_us(1);
+  /*
+    Send a dummy byte of all one bits. This should ensure that the UART state
+    machine can sync up to the byte boundary, as in prevents any new start bit
+    being seen for one character's time.
+  */
+  serial_putc(0xff);
+  for (;;)
+  {
+    uint8_t c = *buf++;
+
+    if (!c)
+      break;
+    crc = crc16(c, crc);
+#if TODO_FIX_QUOTING
+    if (c < ' ' || c >= 127 || c == '!' || c == '?' || c == '|' || c == '\\' ||
+        c == ':')
+    {
+      /* Handle escaping. */
+      serial_putc('\\');
+      serial_putc(dec2hex(c >> 4));
+      serial_putc(dec2hex(c & 0xff));
+    }
+    else
+#endif
+      serial_putc(c);
+  }
+  /* Send the CRC and request end marker. */
+  serial_putc(dec2hex(crc >> 12));
+  serial_putc(dec2hex((uint8_t)(crc >> 8) & 0xf));
+  serial_putc(dec2hex((uint8_t)(crc >> 4) & 0xf));
+  serial_putc(dec2hex((uint8_t)crc & 0xf));
+  serial_putc('\r');
+  serial_putc('\n');
+  serial_wait_for_tx_complete();
+  rs485_receive_mode();
+}
+
+
+static void
+device_discover(uint8_t id, uint8_t *buf)
+{
+  if (id != my_device_id)
+    return;
+  snprintf((char *)buf, MAX_REQ-6, "!%02x:D%u|Temperature room 2|degree C|",
+           id, my_poll_interval);
+  send_reply(buf);
+}
+
+
+static void
+device_poll(uint8_t id, uint8_t *buf)
+{
+  if (id != my_device_id)
+    return;
+  snprintf((char *)buf, MAX_REQ-6, "!%02x:P%g|", id, my_sensor_value);
+  send_reply(buf);
+}
+
+
+/*
+  Process a request.
+  Request format:
+    ?ii:D|cccc                 # Discovery request
+    ?ii:P|cccc                 # Poll request
+  Here, ii is two hex digits to identify the device. Only the device owning
+  that ID may reply.
+  cccc is the CRC16 (in hex) of the request up to and including the '|'.
+*/
+static void
+process_req(uint8_t *req, uint8_t len)
+{
+  uint16_t calc_crc, rcv_crc;
+  uint8_t rcv_id;
+
+  if (len != 10)
+    return;
+  if (req[0] != '?' || req[5] != '|' || (req[4] != 'D' && req[4] != 'P'))
+    return;
+  calc_crc = crc16_buf(req, 6);
+  rcv_crc = ((uint16_t)hex2dec(req[6]) << 12) |
+    ((uint16_t)hex2dec(req[7]) << 8) |
+    ((uint16_t)hex2dec(req[8]) << 4) |
+    (uint16_t)hex2dec(req[9]);
+  if (calc_crc != rcv_crc)
+    return;
+  rcv_id = (hex2dec(req[1]) << 4) | hex2dec(req[2]);
+  if (req[4] == 'D')
+    device_discover(rcv_id, req);
+  else
+    device_poll(rcv_id, req);
+}
+
+
+static uint8_t rcv_buf[MAX_REQ];
+static uint8_t rcv_idx;
+static uint8_t escape_state, escape_val;
+
+static void
+process_received_char(uint8_t c)
+{
+  /* Initially, wait for start-of-request marker '?'. */
+  if (rcv_idx == 0 && c != '?')
+    return;
+  if (rcv_idx >= MAX_REQ)
+  {
+    /* Too long request. */
+    rcv_idx = 0;
+    return;
+  }
+  /* CR before LF is useful for serial debugging, but is otherwise ignored. */
+  if (c == '\r')
+    return;
+  /* A LF marks the end of the request. */
+  if (c == '\n')
+  {
+    /*
+      We have received a request.
+      Process it, with interrupts enabled (but serial reception interrupt
+      disabled), so that we do not block other interrupt processing during
+      long serial transmission.
+      Then reset the buffer, ready for the next request.
+    */
+    serial_interrupt_rx_disable();
+    sei();
+    process_req(rcv_buf, rcv_idx);
+    cli();
+    serial_interrupt_rx_enable();
+    rcv_idx = 0;
+    return;
+  }
+  /* Bytes that would otherwise be special can be escaped with \HH. */
+  if (escape_state == 0 && c == '\\')
+  {
+    escape_state = 1;
+    escape_val = 0;
+    return;
+  }
+  else if (escape_state == 1)
+  {
+    escape_state = 2;
+    escape_val = hex2dec(c);
+    return;
+  }
+  else if (escape_state == 2)
+  {
+    escape_state = 0;
+    c = (escape_val << 4) | hex2dec(c);
+  }
+  /* Save the received byte in the buffer for later processing. */
+  rcv_buf[rcv_idx++] = c;
+}
+
 static void
 test_slave(void)
 {
@@ -161,43 +362,11 @@ test_slave(void)
 
   serial_puts("Starting test...\r\n");
 
+  rs485_receive_mode();
+
   for (;;)
   {
-    unsigned i;
-
-    rs485_receive_mode();
-    idx = 0;
-
-    for (;;)
-    {
-      uint8_t c = serial_getc();
-      if (!idx && c != '?')
-        continue;
-      if (c == '\n')
-        break;
-      if (c == '\r')
-        continue;
-      if (idx >= sizeof(buf))
-        continue;
-      buf[idx++] = c;
-    }
-
-    /* Let's give the master a bit of time to get into receive mode. */
-    _delay_ms(1);
-    rs485_transmit_mode();
-    _delay_ms(1);  // Todo: Only need to wait like 200 ns or so for enable proparation delay.
-    /*
-      Send a dummy byte of all one bits. This should ensure that the UART state
-      machine can sync up to the byte boundary, as in prevents any new start bit
-      being seen for one character's time.
-    */
-    serial_putc(0xff);
-    serial_puts("!ECHO: ");
-    for (i = 0; i < idx; ++i)
-      serial_putc(buf[i]);
-    serial_puts("\r\n");
-    serial_wait_for_tx_complete();
-    rs485_receive_mode();
+    /* Just let the serial receive interrupt handle things. */
   }
 }
 
@@ -207,8 +376,7 @@ serial_interrupt_rx()
   uint8_t c;
 
   c = serial_read();
-  led_on();
-  last_char = c;
+  process_received_char(c);
 }
 
 
@@ -224,7 +392,7 @@ main(int argc, char *argv[])
   serial_mode_8n1();
   serial_transmitter_enable();
   serial_receiver_enable();
-//  serial_interrupt_rx_enable();
+  serial_interrupt_rx_enable();
 
   pin_mode_output(PIN_RE);
   pin_high(PIN_RE);
