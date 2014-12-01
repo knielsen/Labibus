@@ -13,17 +13,19 @@
 #define PIN_RE 6
 /* RO er 0, DI er 1. */
 
+#define MAX_DEVICES 3
+
 #define MAX_REQ 100
 
 
-/*
-  ToDo: We want these to be configurable using library calls.
-  And we need an array of them, so we can support multiple devices in a single
-  program.
-*/
-static uint8_t my_device_id = 0x09;
-static uint16_t my_poll_interval = 15;  /* Desired polling period. */
-static float my_sensor_value = 1.235f;
+static struct {
+  float sensor_value;
+  uint16_t poll_interval;
+  /* A NULL description value means an unused entry. */
+  const char *description, *unit;
+  uint8_t device_id;
+  uint8_t have_value;
+} rs485_devices[MAX_DEVICES];
 
 
 static void
@@ -61,16 +63,6 @@ rs485_transmit_mode(void)
 {
   pin_high(PIN_RE);
   pin_high(PIN_DE);
-}
-
-
-static uint8_t
-serial_getc(void)
-{
-  while (!serial_readable())
-    ;
-  //led_on();
-  return serial_read();
 }
 
 
@@ -285,38 +277,54 @@ send_reply(uint8_t *buf, uint8_t len)
 static void
 device_discover(uint8_t id, uint8_t *buf)
 {
-  uint8_t idx;
+  uint8_t idx, i;
   char tmp[20];
 
-  if (id != my_device_id)
-    return;
-
-  idx = 0;
-  sprintf(tmp, "!%02x:D%u|", id, my_poll_interval);
-  idx = append_to_buf(buf, idx, tmp);
-  idx = quoted_append_to_buf(buf, idx, "Temperature room 2");
-  idx = append_char_to_buf(buf, idx, '|');
-  idx = quoted_append_to_buf(buf, idx, "degree C");
-  idx = append_char_to_buf(buf, idx, '|');
-  send_reply(buf, idx);
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].description)
+      break;
+    if (rs485_devices[i].device_id == id)
+    {
+      idx = 0;
+      sprintf(tmp, "!%02x:D%u|", id, rs485_devices[i].poll_interval);
+      idx = append_to_buf(buf, idx, tmp);
+      idx = quoted_append_to_buf(buf, idx, rs485_devices[i].description);
+      idx = append_char_to_buf(buf, idx, '|');
+      idx = quoted_append_to_buf(buf, idx, rs485_devices[i].unit);
+      idx = append_char_to_buf(buf, idx, '|');
+      send_reply(buf, idx);
+      break;
+    }
+  }
 }
 
 
 static void
 device_poll(uint8_t id, uint8_t *buf)
 {
-  uint8_t idx;
+  uint8_t idx, i;
   char tmp[20];
 
-  if (id != my_device_id)
-    return;
-  idx = 0;
-  sprintf(tmp, "!%02x:P", id);
-  idx = append_to_buf(buf, idx, tmp);
-  dtostrf((double)my_sensor_value, 1, 6, tmp);
-  idx = quoted_append_to_buf(buf, idx, tmp);
-  idx = append_char_to_buf(buf, idx, '|');
-  send_reply(buf, idx);
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].description)
+      break;
+    if (rs485_devices[i].device_id == id)
+    {
+      if (!rs485_devices[i].have_value)
+        break;
+      idx = 0;
+      sprintf(tmp, "!%02x:P", id);
+      idx = append_to_buf(buf, idx, tmp);
+      dtostrf((double)rs485_devices[i].sensor_value, 1, 6, tmp);
+      idx = quoted_append_to_buf(buf, idx, tmp);
+      idx = append_char_to_buf(buf, idx, '|');
+      send_reply(buf, idx);
+      rs485_devices[i].have_value = 0;
+      break;
+    }
+  }
 }
 
 
@@ -394,23 +402,6 @@ process_received_char(uint8_t c)
   rcv_buf[rcv_idx++] = c;
 }
 
-static void
-test_slave(void)
-{
-  char buf[64];
-  unsigned idx;
-
-  serial_puts("Starting test...\r\n");
-
-  rs485_receive_mode();
-
-  for (;;)
-  {
-    /* Just let the serial receive interrupt handle things. */
-  }
-}
-
-
 serial_interrupt_rx()
 {
   uint8_t c;
@@ -420,27 +411,121 @@ serial_interrupt_rx()
 }
 
 
+
+/*
+  Configure a new device as an RS485 sensor.
+
+  The device_id is from 0 to 127. It must be allocated to not conflict with
+  any other sensor on the same network.
+
+  The poll_interval is how often the sensor value should be requested by the
+  master, in seconds.
+
+  The description and unit must be non-NULL strings, they describe the meaning
+  of the sensor and its unit (eg. "degree C" for a temperature sensor). The
+  strings must be valid for the duration of the program, normally just a
+  string litteral will be passed.
+
+  Once configured, a serial receive interrupt will listen for requests from
+  the master, and reply with latest data set with rs485_set_sensor_value(),
+  if any.
+*/
+void
+rs485_init(uint8_t device_id, uint16_t poll_interval,
+           const char *description, const char *unit)
+{
+  uint8_t i;
+
+  if (!description)
+    return;
+  /* Disable interrupts while changing the device table. */
+  cli();
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].description ||
+        rs485_devices[i].device_id == device_id)
+    {
+      rs485_devices[i].sensor_value = 0.0f;
+      rs485_devices[i].poll_interval = poll_interval;
+      rs485_devices[i].description = description;
+      rs485_devices[i].unit = unit;
+      rs485_devices[i].device_id = device_id;
+      rs485_devices[i].have_value = 0;
+      break;
+    }
+  }
+
+  if (i == 0)
+  {
+    /* Setup the serial port and interrupt on the first call. */
+    serial_baud_2400();
+    serial_mode_8n1();
+    serial_transmitter_enable();
+    serial_receiver_enable();
+    serial_interrupt_rx_enable();
+
+    pin_mode_output(PIN_RE);
+    pin_high(PIN_RE);
+    pin_mode_output(PIN_DE);
+    pin_low(PIN_DE);
+
+    rs485_receive_mode();
+  }
+  sei();
+}
+
+
+/*
+  Supply a sensor value for the given device.
+
+  The value will be sent to the master on the next poll request, the interval
+  of which was set in rs485_init().
+
+  This function can be called as often as desired; the latest value will be
+  used when the master request the value. If it is called less often than the
+  poll interval, then polls will be skipped (at most one value will be sent
+  per call to rs485_set_sensor_value()).
+*/
+void
+rs485_set_sensor_value(uint8_t device_id, float value)
+{
+  uint8_t i;
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].description)
+      break;
+    if (rs485_devices[i].device_id != device_id)
+      continue;
+    rs485_devices[i].sensor_value = value;
+    rs485_devices[i].have_value = 1;
+    return;
+  }
+}
+
+
 int
 main(int argc, char *argv[])
 {
+  float val1, val2;
+
   pin_mode_output(13);
   led_off();
 
-  sei();
-
-  serial_baud_2400();
-  serial_mode_8n1();
-  serial_transmitter_enable();
-  serial_receiver_enable();
-  serial_interrupt_rx_enable();
-
-  pin_mode_output(PIN_RE);
-  pin_high(PIN_RE);
-  pin_mode_output(PIN_DE);
-  pin_low(PIN_DE);
+  rs485_init( 9, 10, "Temperature room 2", "degree C");
+  rs485_init(11, 60, "Humidity 2", "%rel");
 
   serial_puts("test_slave inited.\r\n");
 
-  test_slave();
+  val1 = 0.0f;
+  val2 = 10.0f;
+  for (;;)
+  {
+    rs485_set_sensor_value(9, val1);
+    rs485_set_sensor_value(11, val2);
+    _delay_ms(5);
+    val1 += 1.237f;
+    val2 += 0.03f;
+  }
+
   return 0;
 }
