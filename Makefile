@@ -1,6 +1,7 @@
 ## Name your project
 NAME = test_slave
-FILES = test_slave.c
+FILES = test_slave.c Labisense.c
+HEADERS = Labisense.h
 
 ## Point this to the directory where you did
 ##   git clone git://github.com/esmil/oniudra-headers.git arduino
@@ -78,9 +79,9 @@ LDFLAGS   += -lm
 
 all: $(NAME).hex
 
-%.elf: $(or $(FILES),%.c)
+test_slave.elf: $(FILES) $(HEADERS)
 	@echo '  CC $@'
-	@$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+	@$(CC) $(CFLAGS) $(FILES) -o $@ $(LDFLAGS)
 
 %.hex: %.elf
 	@echo '  OBJCOPY $@'
