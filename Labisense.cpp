@@ -1,6 +1,8 @@
 #include <util/delay.h>
 #include <util/atomic.h>
 #include <avr/pgmspace.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
 
 #include <stdlib.h>
 #include <stdio.h>
