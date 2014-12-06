@@ -5,8 +5,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifndef ARDUINO
 #include <arduino/pins.h>
-#include <arduino/serial.h>
+#endif
 
 
 #define PIN_DE 7
@@ -20,6 +21,13 @@
 #define MAX_REQ (20+MAX_DESCRIPTION+MAX_UNIT)
 
 
+#ifdef ARDUINO
+#if !defined(__AVR_ATmega168__) && !defined(__AVR_ATmega328P__)
+#error this AVR device is not yet supported :-(
+#endif
+#endif
+
+
 static struct {
   float sensor_value;
   uint16_t poll_interval;
@@ -31,24 +39,10 @@ static struct {
 
 
 static void
-led_off(void)
+setup_rs485_pins(void)
 {
-  pin_low(13);
-}
-
-
-static void
-led_on(void)
-{
-  pin_high(13);
-}
-
-
-static void
-serial_wait_for_tx_complete(void)
-{
-  while (!(UCSR0A & _BV(TXC0)))
-    ;
+  pin_mode_output(PIN_RE);
+  pin_mode_output(PIN_DE);
 }
 
 
@@ -65,6 +59,85 @@ rs485_transmit_mode(void)
 {
   pin_high(PIN_RE);
   pin_high(PIN_DE);
+}
+
+
+static void
+setup_serial(void)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if F_CPU == 16000000UL
+  /* serial_baud_2400() */
+  UCSR0A = (UCSR0A & ~(_BV(FE0) | _BV(DOR0) | _BV(UPE0)))
+    | _BV(U2X0);
+  UBRR0 = 832;
+#else
+#error This CPU frequency is not yet supported :-(
+#endif
+  /* serial_mode_8n1() */
+  UCSR0B &= ~(_BV(UCSZ02));
+  UCSR0C = (UCSR0C & ~(_BV(UPM01) | _BV(UPM00) | _BV(USBS0)))
+    | _BV(UCSZ01) | _BV(UCSZ00);
+  /* serial_transmitter_enable() */
+  UCSR0B |= _BV(TXEN0);
+  /* serial_receiver_enable() */
+  UCSR0B |= _BV(RXEN0);
+  /* serial_interrupt_rx_enable() */
+  UCSR0B |= _BV(RXCIE0);
+#endif
+}
+
+
+static inline void
+serial_interrupt_rx_enable(void)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+  UCSR0B |= _BV(RXCIE0);
+#endif
+}
+
+
+static inline void
+serial_interrupt_rx_disable(void)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+  UCSR0B &= ~(_BV(RXCIE0));
+#endif
+}
+
+
+static inline uint8_t
+serial_writeable(void)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+  return UCSR0A & _BV(UDRE0);
+#endif
+}
+
+
+static inline void
+serial_write(uint8_t c)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+  UDR0 = c;
+#endif
+}
+
+
+static inline uint8_t
+serial_read(void)
+{
+#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+  return UDR0;
+#endif
+}
+
+
+static void
+serial_wait_for_tx_complete(void)
+{
+  while (!(UCSR0A & _BV(TXC0)))
+    ;
 }
 
 
@@ -404,7 +477,7 @@ process_received_char(uint8_t c)
   rcv_buf[rcv_idx++] = c;
 }
 
-serial_interrupt_rx()
+ISR(USART_RX_vect)
 {
   uint8_t c;
 
@@ -460,17 +533,9 @@ rs485_init(uint8_t device_id, uint16_t poll_interval,
   if (i == 0)
   {
     /* Setup the serial port and interrupt on the first call. */
-    serial_baud_2400();
-    serial_mode_8n1();
-    serial_transmitter_enable();
-    serial_receiver_enable();
-    serial_interrupt_rx_enable();
+    setup_serial();
 
-    pin_mode_output(PIN_RE);
-    pin_high(PIN_RE);
-    pin_mode_output(PIN_DE);
-    pin_low(PIN_DE);
-
+    setup_rs485_pins();
     rs485_receive_mode();
   }
   sei();
@@ -509,9 +574,6 @@ int
 main(int argc, char *argv[])
 {
   float val1, val2;
-
-  pin_mode_output(13);
-  led_off();
 
   rs485_init( 9, 10, "Temperature room 2", "degree C");
   rs485_init(11, 60, "Humidity 2", "%rel");
