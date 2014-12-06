@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 /*
   Arduino library for Labisense RS485 network.
 */

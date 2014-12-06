@@ -5,7 +5,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#ifndef ARDUINO
+#ifdef ARDUINO
+#if ARDUINO >= 100
+ #include "Arduino.h"
+#else
+ #include "WProgram.h"
+#endif
+#else
 #include <arduino/pins.h>
 #endif
 
@@ -13,8 +19,10 @@
 
 
 #ifdef ARDUINO
+#ifdef PERNITTENGRYNET
 #if !defined(__AVR_ATmega168__) && !defined(__AVR_ATmega328P__)
 #error this AVR device is not yet supported :-(
+#endif
 #endif
 #endif
 
@@ -32,31 +40,46 @@ static struct {
 static void
 setup_rs485_pins(void)
 {
+#ifdef ARDUINO
+  pinMode(PIN_RE, OUTPUT);
+  pinMode(PIN_DE, OUTPUT);
+#else
   pin_mode_output(PIN_RE);
   pin_mode_output(PIN_DE);
+#endif
 }
 
 
 static void
 rs485_receive_mode(void)
 {
+#ifdef ARDUINO
+  digitalWrite(PIN_DE, 0);
+  digitalWrite(PIN_RE, 0);
+#else
   pin_low(PIN_DE);
   pin_low(PIN_RE);
+#endif
 }
 
 
 static void
 rs485_transmit_mode(void)
 {
+#ifdef ARDUINO
+  digitalWrite(PIN_RE, 1);
+  digitalWrite(PIN_DE, 1);
+#else
   pin_high(PIN_RE);
   pin_high(PIN_DE);
+#endif
 }
 
 
 static void
 setup_serial(void)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
 #if F_CPU == 16000000UL
   /* serial_baud_2400() */
   UCSR0A = (UCSR0A & ~(_BV(FE0) | _BV(DOR0) | _BV(UPE0)))
@@ -75,52 +98,52 @@ setup_serial(void)
   UCSR0B |= _BV(RXEN0);
   /* serial_interrupt_rx_enable() */
   UCSR0B |= _BV(RXCIE0);
-#endif
+//#endif
 }
 
 
 static inline void
 serial_interrupt_rx_enable(void)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
   UCSR0B |= _BV(RXCIE0);
-#endif
+//#endif
 }
 
 
 static inline void
 serial_interrupt_rx_disable(void)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
   UCSR0B &= ~(_BV(RXCIE0));
-#endif
+//#endif
 }
 
 
 static inline uint8_t
 serial_writeable(void)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
   return UCSR0A & _BV(UDRE0);
-#endif
+//#endif
 }
 
 
 static inline void
 serial_write(uint8_t c)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
   UDR0 = c;
-#endif
+//#endif
 }
 
 
 static inline uint8_t
 serial_read(void)
 {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
   return UDR0;
-#endif
+//#endif
 }
 
 

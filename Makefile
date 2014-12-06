@@ -1,6 +1,6 @@
 ## Name your project
 NAME = test_slave
-FILES = test_slave.c Labisense.c
+FILES = test_slave.cpp Labisense.cpp
 HEADERS = Labisense.h
 
 ## Point this to the directory where you did
@@ -54,7 +54,7 @@ PROG_avrispmkII = -Pusb
 OPT        = 3
 CFLAGS     = -O$(OPT) -pipe -gdwarf-2
 CFLAGS    += -mmcu=$(MCU) -DF_CPU=$(F_CPU) -I$(ARDUINO_HEADERS)
-CFLAGS    += -std=gnu99 -fstrict-aliasing
+CFLAGS    += -fstrict-aliasing
 CFLAGS    += -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums
 ## Uncomment to create listing file
 #CFLAGS    += -Wa,-adhlns=$(<:.c=.lst)
