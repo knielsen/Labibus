@@ -15,7 +15,9 @@
 
 #define MAX_DEVICES 3
 
-#define MAX_REQ 100
+#define MAX_DESCRIPTION 140
+#define MAX_UNIT 20
+#define MAX_REQ (20+MAX_DESCRIPTION+MAX_UNIT)
 
 
 static struct {
