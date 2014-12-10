@@ -18,7 +18,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 void setup() {
   //Serial.begin(9600); 
-  rs485_init(40, 10, "Temperature in room 4", "degree C");
+  labibus_init(40, 10, "Temperature in room 4", "degree C");
  
   pinMode(10,OUTPUT);
   pinMode(11,OUTPUT);
@@ -51,6 +51,6 @@ void loop() {
   //Serial.print("Temperature: "); 
   //Serial.print(t);
   //Serial.println(" *C ");
-  rs485_set_sensor_value(40, t);
+  labibus_set_sensor_value(40, t);
 }
 

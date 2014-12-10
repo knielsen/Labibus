@@ -503,8 +503,8 @@ ISR(USART_RX_vect)
 
 
 void
-rs485_init(uint8_t device_id, uint16_t poll_interval,
-           const char *description, const char *unit)
+labibus_init(uint8_t device_id, uint16_t poll_interval,
+             const char *description, const char *unit)
 {
   uint8_t i;
 
@@ -540,7 +540,7 @@ rs485_init(uint8_t device_id, uint16_t poll_interval,
 
 
 void
-rs485_set_sensor_value(uint8_t device_id, float value)
+labibus_set_sensor_value(uint8_t device_id, float value)
 {
   uint8_t i;
   for (i = 0; i < MAX_DEVICES; ++i)

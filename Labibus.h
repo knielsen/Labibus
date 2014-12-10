@@ -30,21 +30,21 @@
   string litteral will be passed.
 
   Once configured, a serial receive interrupt will listen for requests from
-  the master, and reply with latest data set with rs485_set_sensor_value(),
+  the master, and reply with latest data set with labibus_set_sensor_value(),
   if any.
 */
-extern void rs485_init(uint8_t device_id, uint16_t poll_interval,
-                       const char *description, const char *unit);
+extern void labibus_init(uint8_t device_id, uint16_t poll_interval,
+                         const char *description, const char *unit);
 
 /*
   Supply a sensor value for the given device.
 
   The value will be sent to the master on the next poll request, the interval
-  of which was set in rs485_init().
+  of which was set in labibus_init().
 
   This function can be called as often as desired; the latest value will be
   used when the master request the value. If it is called less often than the
   poll interval, then polls will be skipped (at most one value will be sent
-  per call to rs485_set_sensor_value()).
+  per call to labibus_set_sensor_value()).
 */
-extern void rs485_set_sensor_value(uint8_t device_id, float value);
+extern void labibus_set_sensor_value(uint8_t device_id, float value);
