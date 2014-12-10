@@ -17,7 +17,7 @@
 #include <arduino/pins.h>
 #endif
 
-#include "Labisense.h"
+#include "Labibus.h"
 
 
 #ifdef ARDUINO

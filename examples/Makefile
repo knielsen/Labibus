@@ -1,7 +1,7 @@
 ## Name your project
 NAME = test_slave
-FILES = test_slave.cpp Labisense.cpp
-HEADERS = Labisense.h
+FILES = test_slave.cpp Labibus.cpp
+HEADERS = Labibus.h
 
 ## Point this to the directory where you did
 ##   git clone git://github.com/esmil/oniudra-headers.git arduino
