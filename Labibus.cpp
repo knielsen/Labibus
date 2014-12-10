@@ -83,10 +83,10 @@ setup_serial(void)
 {
 //#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
 #if F_CPU == 16000000UL
-  /* serial_baud_2400() */
+  /* serial_baud_115200() */
   UCSR0A = (UCSR0A & ~(_BV(FE0) | _BV(DOR0) | _BV(UPE0)))
     | _BV(U2X0);
-  UBRR0 = 832;
+  UBRR0 = 16;
 #else
 #error This CPU frequency is not yet supported :-(
 #endif
