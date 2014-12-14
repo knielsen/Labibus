@@ -48,3 +48,28 @@ extern void labibus_init(uint8_t device_id, uint16_t poll_interval,
   per call to labibus_set_sensor_value()).
 */
 extern void labibus_set_sensor_value(uint8_t device_id, float value);
+
+/*
+  Wait for the master device to poll this slave device for its sensor value.
+
+  This function will wait until the current sensor value, set by
+  labibus_set_sensor_value(), has been sent to the master. If the last set
+  value was already sent (or if no value was sent), then the function returns
+  immediately.
+
+  Can be used to work-around poorly designed sensor libraries that do not work
+  well with other concurrent activity in interrupt routines. One such example
+  is the DHT11/DHT22 Arduino library, which relies on exact timing of delay
+  loops, and thus needs interrupts disabled while reading the sensor to not
+  get errors due to incorrect timing.
+
+  Calling this function before disabling the interrupts and reading the sensor
+  can help avoid that the master poll arrives while interrupts are disabled
+  (since the communication with the master is handled in the serial interrupt,
+  a master poll request will get lost if it arrives while interrupts are
+  disabled for long).
+
+  Note that this function temporarily enables interrupts for the duration of
+  the call, if they were disabled upon entry.
+*/
+void labibus_wait_for_poll(uint8_t device_id);

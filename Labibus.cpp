@@ -554,3 +554,13 @@ labibus_set_sensor_value(uint8_t device_id, float value)
     return;
   }
 }
+
+void
+labibus_wait_for_poll(uint8_t device_id)
+{
+  NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
+  {
+    while (rs485_devices[device_id].have_value)
+      ;
+  }
+}
