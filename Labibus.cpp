@@ -22,7 +22,8 @@
 
 #ifdef ARDUINO
 #ifdef PERNITTENGRYNET
-#if !defined(__AVR_ATmega168__) && !defined(__AVR_ATmega328P__)
+#if !defined(__AVR_ATmega168__) && !defined(__AVR_ATmega328P__) \
+  && !defined(__AVR_ATmega32U4__)
 #error this AVR device is not yet supported :-(
 #endif
 #endif
@@ -81,15 +82,34 @@ rs485_transmit_mode(void)
 static void
 setup_serial(void)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
 #if F_CPU == 16000000UL
+#if defined(__AVR_ATmega32U4__)
+  /* serial_baud_115200() */
+  UCSR1A = (UCSR1A & ~(_BV(FE1) | _BV(DOR1) | _BV(UPE1)))
+    | _BV(U2X1);
+  UBRR1 = 16;
+#else
   /* serial_baud_115200() */
   UCSR0A = (UCSR0A & ~(_BV(FE0) | _BV(DOR0) | _BV(UPE0)))
     | _BV(U2X0);
   UBRR0 = 16;
+#endif
 #else
 #error This CPU frequency is not yet supported :-(
 #endif
+
+#if defined(__AVR_ATmega32U4__)
+  /* serial_mode_8n1() */
+  UCSR1B &= ~(_BV(UCSZ12));
+  UCSR1C = (UCSR1C & ~(_BV(UPM11) | _BV(UPM10) | _BV(USBS1)))
+    | _BV(UCSZ11) | _BV(UCSZ10);
+  /* serial_transmitter_enable() */
+  UCSR1B |= _BV(TXEN1);
+  /* serial_receiver_enable() */
+  UCSR1B |= _BV(RXEN1);
+  /* serial_interrupt_rx_enable() */
+  UCSR1B |= _BV(RXCIE1);
+#else
   /* serial_mode_8n1() */
   UCSR0B &= ~(_BV(UCSZ02));
   UCSR0C = (UCSR0C & ~(_BV(UPM01) | _BV(UPM00) | _BV(USBS0)))
@@ -100,60 +120,75 @@ setup_serial(void)
   UCSR0B |= _BV(RXEN0);
   /* serial_interrupt_rx_enable() */
   UCSR0B |= _BV(RXCIE0);
-//#endif
+#endif
 }
 
 
 static inline void
 serial_interrupt_rx_enable(void)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if defined(__AVR_ATmega32U4__)
+  UCSR1B |= _BV(RXCIE1);
+#else
   UCSR0B |= _BV(RXCIE0);
-//#endif
+#endif
 }
 
 
 static inline void
 serial_interrupt_rx_disable(void)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if defined(__AVR_ATmega32U4__)
+  UCSR1B &= ~(_BV(RXCIE1));
+#else
   UCSR0B &= ~(_BV(RXCIE0));
-//#endif
+#endif
 }
 
 
 static inline uint8_t
 serial_writeable(void)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if defined(__AVR_ATmega32U4__)
+  return UCSR1A & _BV(UDRE1);
+#else
   return UCSR0A & _BV(UDRE0);
-//#endif
+#endif
 }
 
 
 static inline void
 serial_write(uint8_t c)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if defined(__AVR_ATmega32U4__)
+  UDR1 = c;
+#else
   UDR0 = c;
-//#endif
+#endif
 }
 
 
 static inline uint8_t
 serial_read(void)
 {
-//#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__)
+#if defined(__AVR_ATmega32U4__)
+  return UDR1;
+#else
   return UDR0;
-//#endif
+#endif
 }
 
 
 static void
 serial_wait_for_tx_complete(void)
 {
+#if defined(__AVR_ATmega32U4__)
+  while (!(UCSR1A & _BV(TXC1)))
+    ;
+#else
   while (!(UCSR0A & _BV(TXC0)))
     ;
+#endif
 }
 
 
@@ -179,11 +214,16 @@ serial_putc(uint8_t c)
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
   {
     serial_write(c);
+#if defined(__AVR_ATmega32U4__)
+    UCSR1A |= _BV(TXC1);
+#else
     UCSR0A |= _BV(TXC0);
+#endif
   }
 }
 
 
+__attribute__((unused))
 static void
 serial_puts(char *s)
 {
@@ -493,7 +533,11 @@ process_received_char(uint8_t c)
   rcv_buf[rcv_idx++] = c;
 }
 
+#if defined(__AVR_ATmega32U4__)
+ISR(USART1_RX_vect)
+#else
 ISR(USART_RX_vect)
+#endif
 {
   uint8_t c;
 
