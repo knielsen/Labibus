@@ -608,3 +608,10 @@ labibus_wait_for_poll(uint8_t device_id)
       ;
   }
 }
+
+
+bool
+labibus_check_for_poll(uint8_t device_id)
+{
+  return rs485_devices[device_id].have_value ? false : true;
+}

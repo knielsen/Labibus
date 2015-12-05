@@ -73,3 +73,13 @@ extern void labibus_set_sensor_value(uint8_t device_id, float value);
   the call, if they were disabled upon entry.
 */
 void labibus_wait_for_poll(uint8_t device_id);
+
+/*
+  Check if the master device has polled the slave device for its sensor value.
+
+  This function will return true if the current sensor value, set by
+  labibus_set_sensor_value(), has been sent to the master (or if no value was
+  ever set). It returns false if a sensor value, set by
+  labibus_set_sensor_value(), is still waiting to be sent to the master.
+*/
+bool labibus_check_for_poll(uint8_t device_id);
