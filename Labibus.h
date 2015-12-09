@@ -8,7 +8,7 @@
 #define PIN_RE 6
 /* RO er 0, DI er 1. */
 
-#define MAX_DEVICES 3
+#define MAX_DEVICES 10
 
 #define MAX_DESCRIPTION 140
 #define MAX_UNIT 20
