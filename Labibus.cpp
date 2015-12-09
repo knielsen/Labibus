@@ -602,10 +602,20 @@ labibus_set_sensor_value(uint8_t device_id, float value)
 void
 labibus_wait_for_poll(uint8_t device_id)
 {
-  NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
+  uint8_t i;
+
+  for (i = 0; i < MAX_DEVICES; ++i)
   {
-    while (rs485_devices[device_id].have_value)
-      ;
+    if (!rs485_devices[i].description)
+      break;
+    if (rs485_devices[i].device_id == device_id)
+    {
+      NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
+      {
+        while (rs485_devices[i].have_value)
+          ;
+      }
+    }
   }
 }
 
@@ -613,5 +623,14 @@ labibus_wait_for_poll(uint8_t device_id)
 bool
 labibus_check_for_poll(uint8_t device_id)
 {
-  return rs485_devices[device_id].have_value ? false : true;
+  uint8_t i;
+
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].description)
+      break;
+    if (rs485_devices[i].device_id == device_id)
+      return rs485_devices[i].have_value ? false : true;
+  }
+  return true;
 }
