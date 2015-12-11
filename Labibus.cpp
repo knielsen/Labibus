@@ -444,12 +444,19 @@ device_poll(uint8_t id, uint8_t *buf)
       continue;
     if (rs485_devices[i].device_id == id)
     {
+      float sensor_value;
+
       if (!rs485_devices[i].have_value)
         break;
       idx = 0;
       sprintf(tmp, "!%02x:P", id);
       idx = append_to_buf(buf, idx, tmp);
-      dtostrf((double)rs485_devices[i].sensor_value, 1, 6, tmp);
+      /* Protect agains read/update race on float value. */
+      ATOMIC_BLOCK(ATOMIC_FORCEON)
+      {
+        sensor_value = rs485_devices[i].sensor_value;
+      }
+      dtostrf((double)sensor_value, 1, 6, tmp);
       idx = quoted_append_to_buf(buf, idx, tmp);
       idx = append_char_to_buf(buf, idx, '|');
       send_reply(buf, idx);
@@ -490,8 +497,12 @@ process_response(uint8_t *req, uint8_t len)
       (uint16_t)hex2dec(req[len-1]);
     if (calc_crc != rcv_crc)
       return;
-    rs485_devices[i].sensor_value = sensor_value;
-    rs485_devices[i].have_value = 1;
+    /* Protect agains read/update race. */
+    ATOMIC_BLOCK(ATOMIC_FORCEON)
+    {
+      rs485_devices[i].sensor_value = sensor_value;
+      rs485_devices[i].have_value = 1;
+    }
     return;
   }
 }
@@ -640,7 +651,11 @@ labibus_set_sensor_value(uint8_t device_id, float value)
       continue;
     if (rs485_devices[i].device_id != device_id)
       continue;
-    rs485_devices[i].sensor_value = value;
+    /* Protect agains read/update race on float value. */
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    {
+      rs485_devices[i].sensor_value = value;
+    }
     rs485_devices[i].have_value = 1;
     return;
   }
@@ -739,9 +754,16 @@ labibus_get_data(uint8_t device_id)
       continue;
     if (rs485_devices[i].device_id == device_id)
     {
+      float sensor_value;
+
       rs485_devices[i].have_value = 0;
-      return rs485_devices[i].sensor_value;
+      /* Protect agains read/update race on float value. */
+      ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+      {
+        sensor_value = rs485_devices[i].sensor_value;
+      }
+      return sensor_value;
     }
   }
-  return false;
+  return -1.0f;
 }
