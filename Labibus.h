@@ -36,6 +36,7 @@
 extern void labibus_init(uint8_t device_id, uint16_t poll_interval,
                          const char *description, const char *unit);
 
+
 /*
   Supply a sensor value for the given device.
 
@@ -72,7 +73,7 @@ extern void labibus_set_sensor_value(uint8_t device_id, float value);
   Note that this function temporarily enables interrupts for the duration of
   the call, if they were disabled upon entry.
 */
-void labibus_wait_for_poll(uint8_t device_id);
+extern void labibus_wait_for_poll(uint8_t device_id);
 
 /*
   Check if the master device has polled the slave device for its sensor value.
@@ -82,4 +83,24 @@ void labibus_wait_for_poll(uint8_t device_id);
   ever set). It returns false if a sensor value, set by
   labibus_set_sensor_value(), is still waiting to be sent to the master.
 */
-bool labibus_check_for_poll(uint8_t device_id);
+extern bool labibus_check_for_poll(uint8_t device_id);
+
+/*
+  Listen for activity from another device on the bus. After calling this
+  function, labibus_check_data() and labibus_get_data() can be used to access
+  values reported by another device.
+*/
+extern void labibus_listen(uint8_t device_id);
+
+/*
+  Check if any new data is available from a device that was previously
+  configured for listening with labibus_listen(). The function will return
+  true if new data has been seen on the bus from this device since last
+  call to labibus_get_data(), false otherwise.
+*/
+extern bool labibus_check_data(uint8_t device_id);
+/*
+  Get the latest data seen from another device previously configured for
+  listening to with labibus_listen().
+*/
+extern float labibus_get_data(uint8_t device_id);

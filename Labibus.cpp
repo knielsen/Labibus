@@ -33,10 +33,11 @@
 static struct {
   float sensor_value;
   uint16_t poll_interval;
-  /* A NULL description value means an unused entry. */
+  /* A NULL description value means an unused (or listening) entry. */
   const char *description, *unit;
   uint8_t device_id;
   uint8_t have_value;
+  uint8_t listen;
 } rs485_devices[MAX_DEVICES];
 
 
@@ -383,7 +384,7 @@ send_reply(uint8_t *buf, uint8_t len)
   _delay_us(1);
   /*
     Send a dummy byte of all one bits. This should ensure that the UART state
-    machine can sync up to the byte boundary, as in prevents any new start bit
+    machine can sync up to the byte boundary, as it prevents any new start bit
     being seen for one character's time.
   */
   serial_putc(0xff);
@@ -414,7 +415,7 @@ device_discover(uint8_t id, uint8_t *buf)
   for (i = 0; i < MAX_DEVICES; ++i)
   {
     if (!rs485_devices[i].description)
-      break;
+      continue;
     if (rs485_devices[i].device_id == id)
     {
       idx = 0;
@@ -440,7 +441,7 @@ device_poll(uint8_t id, uint8_t *buf)
   for (i = 0; i < MAX_DEVICES; ++i)
   {
     if (!rs485_devices[i].description)
-      break;
+      continue;
     if (rs485_devices[i].device_id == id)
     {
       if (!rs485_devices[i].have_value)
@@ -460,6 +461,43 @@ device_poll(uint8_t id, uint8_t *buf)
 
 
 /*
+  Process a response to the master from another device (for labibus_listen()).
+  Response format:
+    !ii:P<float value>|cccc
+  Here, ii is two hex digits giving the device id.
+  cccc is the CRC16 (in hex) of the response up to and including the '|'.
+*/
+static void
+process_response(uint8_t *req, uint8_t len)
+{
+  uint8_t device_id;
+  uint8_t i;
+
+  /* Caller already checked initial part of the request string. */
+  device_id = (hex2dec(req[1]) << 4) | hex2dec(req[2]);
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    float sensor_value;
+    uint16_t calc_crc, rcv_crc;
+
+    if (!rs485_devices[i].listen || rs485_devices[i].device_id != device_id)
+      continue;
+    sensor_value = atof((char *)&req[5]);
+    calc_crc = crc16_buf(req, len-4);
+    rcv_crc = ((uint16_t)hex2dec(req[len-4]) << 12) |
+      ((uint16_t)hex2dec(req[len-3]) << 8) |
+      ((uint16_t)hex2dec(req[len-2]) << 4) |
+      (uint16_t)hex2dec(req[len-1]);
+    if (calc_crc != rcv_crc)
+      return;
+    rs485_devices[i].sensor_value = sensor_value;
+    rs485_devices[i].have_value = 1;
+    return;
+  }
+}
+
+
+/*
   Process a request.
   Request format:
     ?ii:D|cccc                 # Discovery request
@@ -473,6 +511,10 @@ process_req(uint8_t *req, uint8_t len)
 {
   uint16_t calc_crc, rcv_crc;
   uint8_t rcv_id;
+
+  if (len > 10 &&
+      req[0] == '!' && req[3] == ':' && req[4] == 'P' && req[len-5] == '|')
+    return process_response(req, len);
 
   if (len != 10)
     return;
@@ -546,6 +588,16 @@ ISR(USART_RX_vect)
 }
 
 
+static void init_on_first_call()
+{
+  /* Setup the serial port and interrupt on the first call. */
+  setup_serial();
+
+  setup_rs485_pins();
+  rs485_receive_mode();
+}
+
+
 void
 labibus_init(uint8_t device_id, uint16_t poll_interval,
              const char *description, const char *unit)
@@ -558,7 +610,7 @@ labibus_init(uint8_t device_id, uint16_t poll_interval,
   cli();
   for (i = 0; i < MAX_DEVICES; ++i)
   {
-    if (!rs485_devices[i].description ||
+    if ((!rs485_devices[i].description && !rs485_devices[i].listen) ||
         rs485_devices[i].device_id == device_id)
     {
       rs485_devices[i].sensor_value = 0.0f;
@@ -567,18 +619,13 @@ labibus_init(uint8_t device_id, uint16_t poll_interval,
       rs485_devices[i].unit = unit;
       rs485_devices[i].device_id = device_id;
       rs485_devices[i].have_value = 0;
+      rs485_devices[i].listen = 0;
       break;
     }
   }
 
   if (i == 0)
-  {
-    /* Setup the serial port and interrupt on the first call. */
-    setup_serial();
-
-    setup_rs485_pins();
-    rs485_receive_mode();
-  }
+    init_on_first_call();
   sei();
 }
 
@@ -590,7 +637,7 @@ labibus_set_sensor_value(uint8_t device_id, float value)
   for (i = 0; i < MAX_DEVICES; ++i)
   {
     if (!rs485_devices[i].description)
-      break;
+      continue;
     if (rs485_devices[i].device_id != device_id)
       continue;
     rs485_devices[i].sensor_value = value;
@@ -607,7 +654,7 @@ labibus_wait_for_poll(uint8_t device_id)
   for (i = 0; i < MAX_DEVICES; ++i)
   {
     if (!rs485_devices[i].description)
-      break;
+      continue;
     if (rs485_devices[i].device_id == device_id)
     {
       NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
@@ -628,9 +675,73 @@ labibus_check_for_poll(uint8_t device_id)
   for (i = 0; i < MAX_DEVICES; ++i)
   {
     if (!rs485_devices[i].description)
-      break;
+      continue;
     if (rs485_devices[i].device_id == device_id)
       return rs485_devices[i].have_value ? false : true;
   }
   return true;
+}
+
+
+void
+labibus_listen(uint8_t device_id)
+{
+  uint8_t i;
+
+  /* Disable interrupts while changing the device table. */
+  cli();
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if ((!rs485_devices[i].description && !rs485_devices[i].listen) ||
+        rs485_devices[i].device_id == device_id)
+    {
+      rs485_devices[i].sensor_value = -1.0f;
+      rs485_devices[i].poll_interval = 0;
+      rs485_devices[i].description = NULL;
+      rs485_devices[i].unit = NULL;
+      rs485_devices[i].device_id = device_id;
+      rs485_devices[i].have_value = 0;
+      rs485_devices[i].listen = 1;
+      break;
+    }
+  }
+
+  if (i == 0)
+    init_on_first_call();
+  sei();
+}
+
+
+bool
+labibus_check_data(uint8_t device_id)
+{
+  uint8_t i;
+
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].listen)
+      continue;
+    if (rs485_devices[i].device_id == device_id)
+      return rs485_devices[i].have_value ? true : false;
+  }
+  return false;
+}
+
+
+float
+labibus_get_data(uint8_t device_id)
+{
+  uint8_t i;
+
+  for (i = 0; i < MAX_DEVICES; ++i)
+  {
+    if (!rs485_devices[i].listen)
+      continue;
+    if (rs485_devices[i].device_id == device_id)
+    {
+      rs485_devices[i].have_value = 0;
+      return rs485_devices[i].sensor_value;
+    }
+  }
+  return false;
 }
