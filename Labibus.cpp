@@ -552,8 +552,8 @@ static uint8_t rcv_idx;
 static void
 process_received_char(uint8_t c)
 {
-  /* Initially, wait for start-of-request marker '?'. */
-  if (rcv_idx == 0 && c != '?')
+  /* Initially, wait for start-of-request/response markers '?' / '!'. */
+  if (rcv_idx == 0 && c != '?' && c != '!')
     return;
   if (rcv_idx >= MAX_REQ)
   {
